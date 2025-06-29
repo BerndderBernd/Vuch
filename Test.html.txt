@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bilderbuch-Studio</title>
+    <!-- Tailwind CSS CDN für Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React und ReactDOM CDNs -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel CDN für JSX-Transformation im Browser (nur für Entwicklung/einfaches Hosting) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide React Icons CDN -->
+    <script src="https://unpkg.com/lucide-react@0.395.0/dist/umd/lucide-react.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for loading spinner for KI operations */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Basic styling for book pages to ensure correct sizing and content distribution */
+        .book-page-placeholder {
+            min-height: 20rem; /* Fallback height for empty pages */
+            max-height: 25rem; /* Max height for visual consistency */
+        }
+        .book-page {
+            min-height: 20rem; /* Ensure pages have a minimum height */
+            max-height: 25rem; /* Cap max height for consistent display */
+        }
+
+        /* Specific heights for editor based on format */
+        /* For portrait */
+        .h-portrait-editor { height: 48rem; } /* h-[48rem] */
+        /* For landscape */
+        .h-landscape-editor { height: 32rem; } /* h-[32rem] */
+        /* For square */
+        .h-square-editor { height: 40rem; } /* h-[40rem] */
+
+        /* PDF export temporary container specific styles */
+        #pdf-render-temp-container {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            visibility: hidden; /* Hide while rendering to prevent flicker */
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-100 to-purple-200 p-4 sm:p-8">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Zugriff auf Lucide Icons
+        const { RectangleVertical, RectangleHorizontal, Square, Palette, Brush, Plus, ArrowLeft, ArrowRight, Download, Trash2, Image, Sparkles } = lucideReact;
+
+        const App = () => {
+            // === Globale Anwendungszustände ===
+            const [currentView, setCurrentView] = React.useState('format_selection');
+            const [bookFormat, setBookFormat] = React.useState('21x29.7cm-portrait');
+            const [imageStyle, setImageStyle] = React.useState('cartoon');
+
+            // === Editor-spezifische Zustände ===
+            const [pages, setPages] = React.useState([{
+                id: 1, image: '', text: '', originalFile: null, cartoonImageBase64: null,
+                textColor: '#333333', textVerticalAlign: 'bottom', layout: 'image-text'
+            }]);
+            const [currentLeftPageIndex, setCurrentLeftPageIndex] = React.useState(0);
+            const [selectedPageIndexInEditor, setSelectedPageIndexInEditor] = React.useState(0);
+
+            // === KI- und Ladezustände ===
+            const [generatingText, setGeneratingText] = React.useState(false);
+            const [cartoonizingImage, setCartoonizingImage] = React.useState(false);
+            const [textSuggestion, setTextSuggestion] = React.useState('');
+            const [error, setError] = React.useState(null);
+            const [exportingPdf, setExportingPdf] = React.useState(false);
+
+            // === Refs für DOM-Manipulation ===
+            const editorRef = React.useRef(null);
+
+            // Initialisierung: Sicherstellen, dass mindestens eine Seite vorhanden ist
+            React.useEffect(() => {
+                if (pages.length === 0) {
+                    setPages([{ id: 1, image: '', text: '', originalFile: null, cartoonImageBase64: null, textColor: '#333333', textVerticalAlign: 'bottom', layout: 'image-text' }]);
+                    setCurrentLeftPageIndex(0);
+                }
+            }, [pages.length]);
+
+            // Effekt zum Scrollen zum Editor, wenn sich die aktuelle Seite ändert
+            React.useEffect(() => {
+                if (currentView === 'editor' && editorRef.current) {
+                    editorRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                setSelectedPageIndexInEditor(currentLeftPageIndex);
+            }, [currentLeftPageIndex, currentView]);
+
+            // === Hilfsfunktionen für Seitenverwaltung ===
+            const currentLeftPage = pages[currentLeftPageIndex];
+            const currentRightPage = pages[currentLeftPageIndex + 1];
+            const currentlyEditedPage = pages[selectedPageIndexInEditor];
+
+            const handleAddPage = () => {
+                const newPageId = pages.length > 0 ? Math.max(...pages.map(p => p.id)) + 1 : 1;
+                setPages([...pages, { id: newPageId, image: '', text: '', originalFile: null, cartoonImageBase64: null, textColor: '#333333', textVerticalAlign: 'bottom', layout: 'image-text' }]);
+                if (pages.length % 2 === 0) {
+                    setCurrentLeftPageIndex(pages.length);
+                    setSelectedPageIndexInEditor(pages.length);
+                } else {
+                    setSelectedPageIndexInEditor(pages.length);
+                }
+                setTextSuggestion('');
+                setError(null);
+            };
+
+            const handleDeletePage = (pageIndexToDelete) => {
+                if (pages.length > 1) {
+                    const newPages = pages.filter((_, index) => index !== pageIndexToDelete);
+                    setPages(newPages);
+
+                    let newCurrentLeftPageIndex = currentLeftPageIndex;
+                    if (pageIndexToDelete < currentLeftPageIndex) {
+                        newCurrentLeftPageIndex = Math.max(0, currentLeftPageIndex - 1);
+                    } else if (pageIndexToDelete === currentLeftPageIndex && newPages.length > 0) {
+                        newCurrentLeftPageIndex = Math.min(newPages.length - 1, currentLeftPageIndex);
+                    } else if (pageIndexToDelete === currentLeftPageIndex + 1 && newPages.length > 0) {
+                        newCurrentLeftPageIndex = currentLeftPageIndex;
+                    }
+                    newCurrentLeftPageIndex = Math.min(newCurrentLeftPageIndex, newPages.length - (newPages.length % 2 !== 0 ? 1 : 2));
+                    newCurrentLeftPageIndex = Math.max(0, newCurrentLeftPageIndex);
+
+                    setCurrentLeftPageIndex(newCurrentLeftPageIndex);
+                    setSelectedPageIndexInEditor(newCurrentLeftPageIndex);
+                    setTextSuggestion('');
+                    setError(null);
+                } else {
+                    setPages([{ id: 1, image: '', text: '', originalFile: null, cartoonImageBase64: null, textColor: '#333333', textVerticalAlign: 'bottom', layout: 'image-text' }]);
+                    setCurrentLeftPageIndex(0);
+                    setSelectedPageIndexInEditor(0);
+                    setTextSuggestion('');
+                    setError(null);
+                }
+            };
+
+            const updatePage = (pageIndex, newAttributes) => {
+                setPages(prevPages => prevPages.map((page, index) =>
+                    index === pageIndex ? { ...page, ...newAttributes } : page
+                ));
+            };
+
+            // === Handler für Seiteninhalte und Stile ===
+            const fileToBase64 = (file) => {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = error => reject(error);
+                });
+            };
+
+            const handleImageChange = (event, pageIndex) => {
+                if (event.target.files && event.target.files[0]) {
+                    const file = event.target.files[0];
+                    const imageUrl = URL.createObjectURL(file);
+                    updatePage(pageIndex, { image: imageUrl, originalFile: file, cartoonImageBase64: null });
+                    setTextSuggestion('');
+                    setError(null);
+                }
+            };
+
+            const handleTextChange = (event, pageIndex) => {
+                updatePage(pageIndex, { text: event.target.value });
+            };
+
+            const handleTextColorChange = (event, pageIndex) => {
+                updatePage(pageIndex, { textColor: event.target.value });
+            };
+
+            const handleTextVerticalAlignChange = (event, pageIndex) => {
+                updatePage(pageIndex, { textVerticalAlign: event.target.value });
+            };
+
+            const handlePageLayoutChange = (event, pageIndex) => {
+                updatePage(pageIndex, { layout: event.target.value });
+            };
+
+            // === Navigations-Handler ===
+            const handlePreviousPagePair = () => {
+                setCurrentLeftPageIndex(prevIndex => {
+                    const newIndex = Math.max(0, prevIndex - 2);
+                    setSelectedPageIndexInEditor(newIndex);
+                    return newIndex;
+                });
+                setTextSuggestion('');
+                setError(null);
+            };
+
+            const handleNextPagePair = () => {
+                setCurrentLeftPageIndex(prevIndex => {
+                    const newIndex = Math.min(pages.length - (pages.length % 2 !== 0 ? 1 : 2), prevIndex + 2);
+                    setSelectedPageIndexInEditor(newIndex);
+                    return newIndex;
+                });
+                setTextSuggestion('');
+                setError(null);
+            };
+
+            // === KI-Funktionen ===
+            const generateTextSuggestion = React.useCallback(async (pageToSuggestIndex) => {
+                const pageToSuggest = pages[pageToSuggestIndex];
+                let imageDataForAI = null;
+                let mimeTypeForAI = "image/jpeg";
+
+                if (!pageToSuggest || (!pageToSuggest.originalFile && !pageToSuggest.cartoonImageBase64)) {
+                    setError("Bitte laden Sie zuerst ein Bild auf dieser Seite hoch, um einen Textvorschlag zu erhalten.");
+                    return;
+                }
+
+                if (pageToSuggest.cartoonImageBase64) {
+                    imageDataForAI = pageToSuggest.cartoonImageBase64;
+                    mimeTypeForAI = "image/png";
+                } else if (pageToSuggest.originalFile) {
+                    imageDataForAI = await fileToBase64(pageToSuggest.originalFile);
+                    mimeTypeForAI = pageToSuggest.originalFile.type;
+                }
+
+                setGeneratingText(true);
+                setTextSuggestion('');
+                setError(null);
+
+                try {
+                    const prompt = "Schreibe eine kurze, fesselnde Geschichte für ein Kinderbuch basierend auf diesem Bild, geeignet für junge Leser. Halte sie prägnant, etwa 3-5 Sätze. Konzentriere dich auf positive Themen und einfache Sprache.";
+
+                    const payload = {
+                        contents: [
+                            {
+                                role: "user",
+                                parts: [
+                                    { text: prompt },
+                                    {
+                                        inlineData: {
+                                            mimeType: mimeTypeForAI,
+                                            data: imageDataForAI
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                    };
+
+                    const apiKey = "";
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const generatedText = result.candidates[0].content.parts[0].text;
+                        setTextSuggestion(generatedText);
+                        updatePage(pageToSuggestIndex, { text: generatedText });
+                    } else {
+                        console.error("Gemini API response structure unexpected:", result);
+                        setError("Es konnte kein Textvorschlag generiert werden. Bitte versuchen Sie es erneut.");
+                    }
+                } catch (err) {
+                    console.error("Fehler beim Abrufen des Textvorschlags:", err);
+                    setError(`Fehler beim Generieren des Textvorschlags: ${err.message}`);
+                } finally {
+                    setGeneratingText(false);
+                }
+            }, [pages]);
+
+            const handleCartoonizeImage = React.useCallback(async (pageToProcessIndex) => {
+                const pageToProcess = pages[pageToProcessIndex];
+                if (!pageToProcess || !pageToProcess.originalFile) {
+                    setError("Bitte laden Sie zuerst ein Bild hoch, das verarbeitet werden soll.");
+                    return;
+                }
+
+                setCartoonizingImage(true);
+                setError(null);
+
+                try {
+                    const base64Original = await fileToBase64(pageToProcess.originalFile);
+
+                    const describePrompt = "Beschreibe dieses Bild detailliert, konzentriere dich auf die Hauptmotive, Farben und den Stil. Gib nur die Beschreibung aus.";
+                    const describePayload = { contents: [{ role: "user", parts: [{ text: describePrompt }, { inlineData: { mimeType: pageToProcess.originalFile.type, data: base64Original } }] }] };
+                    const geminiApiKey = "";
+                    const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+
+                    const describeResponse = await fetch(geminiApiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(describePayload)
+                    });
+                    const describeResult = await describeResponse.json();
+                    const description = describeResult.candidates?.[0]?.content?.parts?.[0]?.text || "ein Bild";
+
+                    let generatePrompt = "";
+                    if (imageStyle === 'cartoon') {
+                        generatePrompt = `${description} in einem Cartoon-Stil, Comic-Kunst, animiert, helle Farben, freundlich, digitale Kunst.`;
+                    } else if (imageStyle === 'coloring_book') {
+                        generatePrompt = `${description}, simple, clear, thick black outline drawing, coloring book page, line art only, no fill, no shading, pure white background, minimalistic, easy to color, --no color`;
+                    }
+
+                    const generatePayload = { instances: { prompt: generatePrompt }, parameters: { "sampleCount": 1 } };
+                    const imagenApiKey = "";
+                    const imagenApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${imagenApiKey}`;
+
+                    const generateResponse = await fetch(imagenApiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(generatePayload)
+                    });
+                    const generateResult = await generateResponse.json();
+
+                    if (generateResult.predictions && generateResult.predictions.length > 0 && generateResult.predictions[0].bytesBase64Encoded) {
+                        const generatedImageUrl = `data:image/png;base64,${generateResult.predictions[0].bytesBase64Encoded}`;
+                        const generatedBase64Data = generateResult.predictions[0].bytesBase64Encoded;
+                        updatePage(pageToProcessIndex, { image: generatedImageUrl, cartoonImageBase64: generatedBase64Data });
+                    } else {
+                        console.error("Imagen API response structure unexpected:", generateResult);
+                        setError("Fehler bei der Bildgenerierung. Bitte versuchen Sie es erneut.");
+                    }
+
+                } catch (err) {
+                    console.error("Fehler beim Bildprozess:", err);
+                    setError(`Fehler beim Verarbeiten des Bildes: ${err.message}`);
+                } finally {
+                    setCartoonizingImage(false);
+                }
+            }, [pages, imageStyle]);
+
+            // === PDF-Export Funktion ===
+            const handleExportPdf = React.useCallback(async () => {
+                setExportingPdf(true);
+                setError(null);
+
+                const loadJsPdf = () => {
+                    return new Promise((resolve) => {
+                        if (window.html2canvas && window.jspdf) {
+                            resolve();
+                            return;
+                        }
+                        const script1 = document.createElement('script');
+                        script1.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+                        script1.onload = () => {
+                            const script2 = document.createElement('script');
+                            script2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+                            script2.onload = resolve;
+                            document.body.appendChild(script2);
+                        };
+                        document.body.appendChild(script1);
+                    });
+                };
+
+                try {
+                    await loadJsPdf();
+                    const { jsPDF } = window.jspdf;
+
+                    const [dimString, type] = bookFormat.split('-');
+                    const [widthCm, heightCm] = dimString.split('x').map(parseFloat);
+                    const pdfWidthMm = widthCm * 10;
+                    const pdfHeightMm = heightCm * 10;
+
+                    let orientation = 'p';
+                    if (type === 'landscape') {
+                        orientation = 'l';
+                    }
+
+                    const doc = new jsPDF(orientation, 'mm', [pdfWidthMm, pdfHeightMm]);
+
+                    for (let i = 0; i < pages.length; i++) {
+                        const pageForExport = pages[i];
+
+                        const tempPageDiv = document.createElement('div');
+                        tempPageDiv.style.width = `${pdfWidthMm}mm`;
+                        tempPageDiv.style.height = `${pdfHeightMm}mm`;
+                        tempPageDiv.style.padding = '10mm';
+                        tempPageDiv.style.boxSizing = 'border-box';
+                        tempPageDiv.style.backgroundColor = 'white';
+                        tempPageDiv.style.display = 'flex';
+                        tempPageDiv.style.flexDirection = 'column';
+                        tempPageDiv.style.fontFamily = 'Inter, sans-serif';
+                        tempPageDiv.style.overflow = 'hidden';
+                        tempPageDiv.style.position = 'absolute';
+                        tempPageDiv.style.left = '-9999px';
+                        tempPageDiv.style.top = '-9999px';
+                        document.body.appendChild(tempPageDiv);
+
+                        const headerDiv = document.createElement('div');
+                        headerDiv.style.display = 'flex';
+                        headerDiv.style.justifyContent = 'space-between';
+                        headerDiv.style.alignItems = 'center';
+                        headerDiv.style.width = '100%';
+                        headerDiv.style.marginBottom = '5mm';
+
+                        const pageNumSpan = document.createElement('span');
+                        pageNumSpan.textContent = `Seite ${i + 1}`;
+                        pageNumSpan.style.fontSize = '10px';
+                        pageNumSpan.style.fontWeight = 'bold';
+                        pageNumSpan.style.backgroundColor = '#ede9fe';
+                        pageNumSpan.style.color = '#7c3aed';
+                        pageNumSpan.style.padding = '2px 8px';
+                        pageNumSpan.style.borderRadius = '12px';
+                        headerDiv.appendChild(pageNumSpan);
+
+                        if (pageForExport.cartoonImageBase64) {
+                            const styleTag = document.createElement('span');
+                            styleTag.textContent = imageStyle === 'cartoon' ? 'Cartoon-Version' : 'Ausmalbuch-Version';
+                            styleTag.style.fontSize = '8px';
+                            styleTag.style.fontWeight = 'bold';
+                            styleTag.style.backgroundColor = '#8b5cf6';
+                            styleTag.style.color = 'white';
+                            styleTag.style.padding = '2px 6px';
+                            styleTag.style.borderRadius = '10px';
+                            headerDiv.appendChild(styleTag);
+                        }
+                        tempPageDiv.appendChild(headerDiv);
+
+                        const contentArea = document.createElement('div');
+                        contentArea.style.display = 'flex';
+                        contentArea.style.flexDirection = 'column';
+                        contentArea.style.flexGrow = '1';
+                        contentArea.style.width = '100%';
+                        contentArea.style.overflow = 'hidden';
+
+                        if (pageForExport.layout === 'image-text' || pageForExport.layout === 'image-only') {
+                            const imgContainer = document.createElement('div');
+                            imgContainer.style.width = '100%';
+                            imgContainer.style.display = 'flex';
+                            imgContainer.style.justifyContent = 'center';
+                            imgContainer.style.marginBottom = '5mm';
+                            imgContainer.style.flexShrink = '0';
+
+                            if (pageForExport.layout === 'image-text') {
+                                imgContainer.style.height = '100px';
+                            } else {
+                                imgContainer.style.flexGrow = '1';
+                                imgContainer.style.alignItems = 'center';
+                            }
+
+                            if (pageForExport.image) {
+                                const img = document.createElement('img');
+                                img.src = pageForExport.image;
+                                img.style.maxWidth = '100%';
+                                img.style.maxHeight = '100%';
+                                img.style.objectFit = 'contain';
+                                img.style.borderRadius = '8px';
+                                img.style.border = '1px solid #ddd';
+                                imgContainer.appendChild(img);
+                            } else {
+                                const placeholder = document.createElement('div');
+                                placeholder.textContent = '[Kein Bild]';
+                                placeholder.style.width = '100%';
+                                placeholder.style.height = '100%';
+                                placeholder.style.backgroundColor = '#f3f4f6';
+                                placeholder.style.display = 'flex';
+                                placeholder.style.alignItems = 'center';
+                                placeholder.style.justifyContent = 'center';
+                                placeholder.style.color = '#9ca3af';
+                                placeholder.style.borderRadius = '8px';
+                                placeholder.style.border = '1px dashed #d1d5db';
+                                imgContainer.appendChild(placeholder);
+                            }
+                            contentArea.appendChild(imgContainer);
+                        }
+
+                        if (pageForExport.layout === 'image-text' || pageForExport.layout === 'text-only') {
+                            const textContainer = document.createElement('div');
+                            textContainer.style.width = '100%';
+                            textContainer.style.display = 'flex';
+                            textContainer.style.flexDirection = 'column';
+                            textContainer.style.flexGrow = '1';
+                            textContainer.style.overflowY = 'auto';
+                            textContainer.style.textAlign = 'center';
+
+                            switch (pageForExport.textVerticalAlign) {
+                                case 'top': textContainer.style.justifyContent = 'flex-start'; break;
+                                case 'middle': textContainer.style.justifyContent = 'center'; break;
+                                case 'bottom': textContainer.style.justifyContent = 'flex-end'; break;
+                                default: textContainer.style.justifyContent = 'flex-end';
+                            }
+
+                            const textP = document.createElement('p');
+                            textP.textContent = pageForExport.text || '[Kein Text]';
+                            textP.style.color = pageForExport.textColor;
+                            textP.style.fontSize = '12px';
+                            textP.style.lineHeight = '1.5';
+                            textP.style.margin = '0';
+                            textContainer.appendChild(textP);
+                            contentArea.appendChild(textContainer);
+                        }
+
+                        tempPageDiv.appendChild(contentArea);
+
+                        const canvas = await html2canvas(tempPageDiv, {
+                            scale: 3,
+                            useCORS: true,
+                            allowTaint: true,
+                            backgroundColor: 'white'
+                        });
+
+                        const imgData = canvas.toDataURL('image/png');
+                        const imgWidthPdf = doc.internal.pageSize.getWidth();
+                        const imgHeightPdf = (canvas.height * imgWidthPdf) / canvas.width;
+
+                        if (i > 0) {
+                            doc.addPage();
+                        }
+                        doc.addImage(imgData, 'PNG', 0, 0, imgWidthPdf, imgHeightPdf);
+
+                        document.body.removeChild(tempPageDiv);
+                    }
+
+                    doc.save(`bilderbuch_${bookFormat}_${imageStyle}.pdf`);
+
+                } catch (err) {
+                    console.error("Fehler beim Exportieren des PDF:", err);
+                    setError(`Fehler beim Exportieren des PDF: ${err.message}. Stellen Sie sicher, dass keine externen Bilder mit CORS-Problemen verwendet werden.`);
+                } finally {
+                    setExportingPdf(false);
+                    const strayContainers = document.querySelectorAll('[style*="position: absolute; left: -9999px;"]');
+                    strayContainers.forEach(container => container.remove());
+                }
+            }, [pages, bookFormat, imageStyle]);
+
+            // === Hilfs-CSS-Klassen ===
+            const getTextVerticalAlignClasses = (align) => {
+                switch (align) {
+                    case 'top': return 'justify-start';
+                    case 'middle': return 'justify-center';
+                    case 'bottom': return 'justify-end';
+                    default: return 'justify-end';
+                }
+            };
+
+            const getBookEditorSizingClasses = React.useCallback(() => {
+                let baseHeightClass = 'h-[48rem]'; // Default for portrait
+                if (bookFormat.includes('landscape')) {
+                    baseHeightClass = 'h-[32rem]';
+                } else if (bookFormat.includes('square')) {
+                    baseHeightClass = 'h-[40rem]';
+                }
+                return `w-full max-w-full ${baseHeightClass}`;
+            }, [bookFormat]);
+
+            const parseFormatString = (formatString) => {
+                const [dimensions] = formatString.split('-');
+                const [widthStr, heightStr] = dimensions.split('x');
+                return { width: parseFloat(widthStr), height: parseFloat(heightStr) };
+            };
+
+            const renderBookPageVisual = (page, pageIndex) => {
+                if (!page) return (
+                    <div className={`book-page-placeholder bg-gray-100 rounded-lg shadow-inner flex items-center justify-center text-gray-400 text-lg border border-dashed border-gray-300 w-full h-full flex-shrink-0`}>
+                        Leere Seite
+                    </div>
+                );
+
+                const commonPageClasses = "relative bg-white border border-gray-300 rounded-lg shadow-lg flex flex-col p-4 w-full h-full flex-shrink-0 transition-all duration-200 ease-in-out";
+
+                return (
+                    <div key={page.id} className={commonPageClasses}>
+                        <span className="absolute top-2 left-2 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-1 rounded-full shadow-sm z-10">
+                            Seite {pageIndex + 1}
+                        </span>
+
+                        <div className="flex flex-col flex-grow w-full overflow-hidden">
+                            {(page.layout === 'image-text' || page.layout === 'image-only') && (
+                                <div className={`relative w-full flex items-center justify-center
+                                                 ${page.layout === 'image-only' ? 'flex-grow' : 'flex-none h-40 md:h-48'}
+                                                 mb-2`}>
+                                    {page.image ? (
+                                        <img
+                                            src={page.image}
+                                            alt={`Buchseite ${pageIndex + 1} Bild`}
+                                            className="w-full h-full object-contain rounded-lg border border-gray-200 shadow-sm"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full bg-gray-50 flex items-center justify-center rounded-lg text-gray-400 text-sm border border-dashed border-gray-300">
+                                            [Kein Bild]
+                                        </div>
+                                    )}
+                                    {page.cartoonImageBase64 && (
+                                        <span className="absolute top-0 right-0 mt-1 mr-1 bg-purple-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
+                                            {imageStyle === 'cartoon' ? 'Cartoon' : 'Ausmalbild'}
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+
+                            {(page.layout === 'image-text' || page.layout === 'text-only') && (
+                                <div className={`w-full flex-grow flex ${getTextVerticalAlignClasses(page.textVerticalAlign)}`}>
+                                    <p
+                                        className="text-sm leading-relaxed overflow-y-auto px-1 w-full"
+                                        style={{ color: page.textColor }}
+                                    >
+                                        {page.text || '[Kein Text]'}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            // === Komponente: Startseite zur Formatauswahl ===
+            if (currentView === 'format_selection') {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-green-100 p-4 sm:p-8 flex flex-col items-center justify-center font-sans text-gray-800">
+                        <div className="bg-white p-8 sm:p-12 rounded-3xl shadow-2xl w-full max-w-3xl flex flex-col items-center space-y-10 border-4 border-blue-300">
+                            <h1 className="text-4xl sm:text-5xl font-extrabold text-center text-blue-800 mb-4 drop-shadow-md">
+                                Willkommen im Bilderbuch-Studio!
+                            </h1>
+                            <p className="text-lg sm:text-xl text-center text-gray-700 max-w-2xl">
+                                Wählen Sie Format und Stil für Ihr neues Bilderbuch.
+                            </p>
+
+                            {/* Buchformat-Auswahl */}
+                            <div className="w-full">
+                                <label className="block text-xl font-semibold text-gray-800 mb-4">Buchformat wählen:</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                    <button
+                                        onClick={() => setBookFormat('21x29.7cm-portrait')}
+                                        className={`flex flex-col items-center justify-center p-6 rounded-xl border-4 transition-all duration-300
+                                            ${bookFormat === '21x29.7cm-portrait' ? 'border-blue-600 bg-blue-50 shadow-lg' : 'border-gray-300 hover:border-blue-400 bg-white hover:shadow-md'}`}
+                                    >
+                                        <RectangleVertical className={`h-16 w-16 mb-2 ${bookFormat === '21x29.7cm-portrait' ? 'text-blue-600' : 'text-gray-400'}`} />
+                                        <span className="font-semibold text-lg text-center">Hochformat (21x29,7cm)</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setBookFormat('29.7x21cm-landscape')}
+                                        className={`flex flex-col items-center justify-center p-6 rounded-xl border-4 transition-all duration-300
+                                            ${bookFormat === '29.7x21cm-landscape' ? 'border-blue-600 bg-blue-50 shadow-lg' : 'border-gray-300 hover:border-blue-400 bg-white hover:shadow-md'}`}
+                                    >
+                                        <RectangleHorizontal className={`h-16 w-16 mb-2 ${bookFormat === '29.7x21cm-landscape' ? 'text-blue-600' : 'text-gray-400'}`} />
+                                        <span className="font-semibold text-lg text-center">Querformat (29,7x21cm)</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setBookFormat('21x21cm-square')}
+                                        className={`flex flex-col items-center justify-center p-6 rounded-xl border-4 transition-all duration-300
+                                            ${bookFormat === '21x21cm-square' ? 'border-blue-600 bg-blue-50 shadow-lg' : 'border-gray-300 hover:border-blue-400 bg-white hover:shadow-md'}`}
+                                    >
+                                        <Square className={`h-16 w-16 mb-2 ${bookFormat === '21x21cm-square' ? 'text-blue-600' : 'text-gray-400'}`} />
+                                        <span className="font-semibold text-lg text-center">Quadratisch (21x21cm)</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Bildstil-Auswahl */}
+                            <div className="w-full mt-8">
+                                <label className="block text-xl font-semibold text-gray-800 mb-4">Bildstil wählen:</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                    <button
+                                        onClick={() => setImageStyle('cartoon')}
+                                        className={`flex flex-col items-center justify-center p-6 rounded-xl border-4 transition-all duration-300
+                                            ${imageStyle === 'cartoon' ? 'border-green-600 bg-green-50 shadow-lg' : 'border-gray-300 hover:border-green-400 bg-white hover:shadow-md'}`}
+                                    >
+                                        <Palette className={`h-16 w-16 mb-2 ${imageStyle === 'cartoon' ? 'text-green-600' : 'text-gray-400'}`} />
+                                        <span className="font-semibold text-lg text-center">Cartoon Bilderbuch</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setImageStyle('coloring_book')}
+                                        className={`flex flex-col items-center justify-center p-6 rounded-xl border-4 transition-all duration-300
+                                            ${imageStyle === 'coloring_book' ? 'border-green-600 bg-green-50 shadow-lg' : 'border-gray-300 hover:border-green-400 bg-white hover:shadow-md'}`}
+                                    >
+                                        <Brush className={`h-16 w-16 mb-2 ${imageStyle === 'coloring_book' ? 'text-green-600' : 'text-gray-400'}`} />
+                                        <span className="font-semibold text-lg text-center">Ausmalbilderbuch</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => setCurrentView('editor')}
+                                className="mt-10 px-10 py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-full shadow-lg hover:from-purple-700 hover:to-indigo-700 transition transform hover:-translate-y-1 text-xl font-bold"
+                            >
+                                Design starten
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // === Komponente: Haupteditor (aufgeschlagenes Buch) ===
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-indigo-100 to-purple-200 p-4 sm:p-8 flex flex-col items-center font-sans text-gray-800">
+                    <div className="bg-white p-6 sm:p-10 rounded-3xl shadow-2xl w-full max-w-7xl flex flex-col items-center space-y-8 border-4 border-purple-300">
+                        <h1 className="text-4xl sm:text-5xl font-extrabold text-center text-purple-800 mb-4 drop-shadow-md">
+                            Dein Bilderbuch-Studio
+                        </h1>
+                        <p className="text-lg sm:text-xl text-center text-gray-700 mb-6 max-w-2xl">
+                            Gestalte deine Geschichten professionell – mit Bildern und KI-unterstützten Texten.
+                        </p>
+
+                        {/* Buch-Editor Bereich (Das aufgeschlagene Buch und Seiten-Bedienfeld) */}
+                        <div className="flex flex-col lg:flex-row w-full max-w-full lg:max-w-6xl space-y-8 lg:space-y-0 lg:space-x-8 items-start justify-center">
+                            {/* Linker Bereich: Das aufgeschlagene Buch */}
+                            <div ref={editorRef} className={`relative bg-purple-100 rounded-3xl shadow-2xl flex border-4 border-purple-400 overflow-hidden ${getBookEditorSizingClasses()}`}>
+                                {/* Buchrücken */}
+                                <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-4 bg-purple-700 shadow-inner z-20 flex flex-col justify-center items-center text-white text-xs">
+                                    <span className="transform rotate-90 whitespace-nowrap text-sm font-semibold tracking-wider text-purple-200">BUCH</span>
+                                </div>
+
+                                {/* Linke Seite des aufgeschlagenen Buches */}
+                                <div className="w-1/2 p-4 flex flex-col items-stretch border-r border-gray-300 relative z-10">
+                                    {renderBookPageVisual(currentLeftPage, currentLeftPageIndex)}
+                                    {/* Overlay zur Seitenwahl im Editor */}
+                                    <button
+                                        onClick={() => setSelectedPageIndexInEditor(currentLeftPageIndex)}
+                                        className={`absolute inset-0 z-30 flex items-center justify-center p-2 rounded-lg
+                                            ${selectedPageIndexInEditor === currentLeftPageIndex ? 'bg-blue-200 bg-opacity-30' : 'hover:bg-blue-100 hover:bg-opacity-20'}
+                                            transition-all duration-200`}
+                                    >
+                                        <span className={`text-xl font-bold text-blue-700 ${selectedPageIndexInEditor === currentLeftPageIndex ? '' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                                            Seite {currentLeftPageIndex + 1}
+                                        </span>
+                                    </button>
+                                </div>
+                                {/* Rechte Seite des aufgeschlagenen Buches */}
+                                <div className="w-1/2 p-4 flex flex-col items-stretch relative z-10">
+                                    {currentRightPage ? renderBookPageVisual(currentRightPage, currentLeftPageIndex + 1) : (
+                                        <div className="book-page-placeholder bg-gray-100 rounded-lg shadow-inner flex items-center justify-center text-gray-400 text-lg border border-dashed border-gray-300 w-full h-full">
+                                            Leere Seite (ungerade Seitenzahl)
+                                        </div>
+                                    )}
+                                    {/* Overlay zur Seitenwahl im Editor */}
+                                    {currentRightPage && (
+                                        <button
+                                            onClick={() => setSelectedPageIndexInEditor(currentLeftPageIndex + 1)}
+                                            className={`absolute inset-0 z-30 flex items-center justify-center p-2 rounded-lg
+                                                ${selectedPageIndexInEditor === (currentLeftPageIndex + 1) ? 'bg-blue-200 bg-opacity-30' : 'hover:bg-blue-100 hover:bg-opacity-20'}
+                                                transition-all duration-200`}
+                                        >
+                                            <span className={`text-xl font-bold text-blue-700 ${selectedPageIndexInEditor === (currentLeftPageIndex + 1) ? '' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                                                Seite {currentLeftPageIndex + 2}
+                                            </span>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Rechter Bereich: Seiten-Bedienfeld */}
+                            <div className="w-full lg:w-1/4 bg-gray-50 p-6 rounded-3xl shadow-lg border-2 border-gray-200 flex flex-col space-y-6 flex-shrink-0 lg:min-w-[300px]">
+                                <h2 className="text-2xl font-bold text-gray-700 text-center mb-4">
+                                    Optionen für Seite {selectedPageIndexInEditor + 1}
+                                </h2>
+
+                                {currentlyEditedPage ? (
+                                    <>
+                                        {/* Textbereich */}
+                                        <label className="block text-sm font-medium text-gray-700">Text:</label>
+                                        <textarea
+                                            value={currentlyEditedPage.text}
+                                            onChange={(e) => handleTextChange(e, selectedPageIndexInEditor)}
+                                            placeholder="Hier den Text für diese Seite eingeben..."
+                                            rows="8"
+                                            className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-purple-300 focus:border-transparent resize-y text-base text-gray-700 placeholder-gray-400"
+                                            style={{ color: currentlyEditedPage.textColor }}
+                                        ></textarea>
+
+                                        {/* Layout Selection */}
+                                        <div className="flex flex-col space-y-2">
+                                            <label className="text-sm font-medium text-gray-700">Layout:</label>
+                                            <select
+                                                value={currentlyEditedPage.layout}
+                                                onChange={(e) => handlePageLayoutChange(e, selectedPageIndexInEditor)}
+                                                className="p-2 border border-gray-300 rounded-md shadow-sm text-sm focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                                            >
+                                                <option value="image-text">Bild & Text</option>
+                                                <option value="image-only">Nur Bild</option>
+                                                <option value="text-only">Nur Text</option>
+                                            </select>
+                                        </div>
+
+                                        {/* Color Picker */}
+                                        <div className="flex flex-col space-y-2">
+                                            <label htmlFor={`text-color-${selectedPageIndexInEditor}`} className="text-sm font-medium text-gray-700">Textfarbe:</label>
+                                            <input
+                                                type="color"
+                                                id={`text-color-${selectedPageIndexInEditor}`}
+                                                value={currentlyEditedPage.textColor}
+                                                onChange={(e) => handleTextColorChange(e, selectedPageIndexInEditor)}
+                                                className="w-full h-10 p-0.5 border border-gray-300 rounded-md cursor-pointer focus:ring-2 focus:ring-purple-400"
+                                            />
+                                        </div>
+                                        {/* Position Select */}
+                                        <div className="flex flex-col space-y-2">
+                                            <label htmlFor={`text-align-${selectedPageIndexInEditor}`} className="text-sm font-medium text-gray-700">Textposition:</label>
+                                            <select
+                                                id={`text-align-${selectedPageIndexInEditor}`}
+                                                value={currentlyEditedPage.textVerticalAlign}
+                                                onChange={(e) => handleTextVerticalAlignChange(e, selectedPageIndexInEditor)}
+                                                className="p-2 border border-gray-300 rounded-md shadow-sm text-sm focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                                            >
+                                                <option value="top">Oben</option>
+                                                <option value="middle">Mitte</option>
+                                                <option value="bottom">Unten</option>
+                                            </select>
+                                        </div>
+                                        {/* Buttons: Image, Cartoon, Text Suggestion, Delete */}
+                                        <div className="grid grid-cols-1 gap-4 mt-4">
+                                            <label htmlFor={`image-upload-${selectedPageIndexInEditor}-panel`} className="block w-full cursor-pointer bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg text-center text-base shadow-md transition">
+                                                <Image className="h-5 w-5 inline-block mr-2" />
+                                                Bild hinzufügen
+                                                <input
+                                                    id={`image-upload-${selectedPageIndexInEditor}-panel`}
+                                                    type="file"
+                                                    accept="image/*"
+                                                    onChange={(e) => handleImageChange(e, selectedPageIndexInEditor)}
+                                                    className="hidden"
+                                                />
+                                            </label>
+                                            {currentlyEditedPage.originalFile && !currentlyEditedPage.cartoonImageBase64 && (
+                                                <button
+                                                    onClick={() => handleCartoonizeImage(selectedPageIndexInEditor)}
+                                                    disabled={cartoonizingImage}
+                                                    className={`w-full py-3 rounded-lg text-white text-base font-semibold shadow-md transition ${cartoonizingImage ? 'bg-gray-400 cursor-not-allowed' : 'bg-orange-500 hover:bg-orange-600'}`}
+                                                >
+                                                    {cartoonizingImage ? (
+                                                        <>
+                                                            <Sparkles className="animate-spin h-5 w-5 text-white mr-2" />
+                                                            {`Bild wird als ${imageStyle === 'cartoon' ? 'Cartoon' : 'Ausmalbild'} erstellt...`}
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Sparkles className="h-5 w-5 inline-block mr-2" />
+                                                            {`Bild als ${imageStyle === 'cartoon' ? 'Cartoon' : 'Ausmalbild'} erstellen`}
+                                                        </>
+                                                    )}
+                                                </button>
+                                            )}
+                                             {currentlyEditedPage.image && (
+                                                <button
+                                                    onClick={() => generateTextSuggestion(selectedPageIndexInEditor)}
+                                                    disabled={generatingText}
+                                                    className={`w-full py-3 rounded-lg text-white text-base font-semibold shadow-md transition ${generatingText ? 'bg-gray-400 cursor-not-allowed' : 'bg-pink-500 hover:bg-pink-600'}`}
+                                                >
+                                                    {generatingText ? (
+                                                        <>
+                                                            <Sparkles className="animate-spin h-5 w-5 text-white mr-2" />
+                                                            Text wird generiert...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Sparkles className="h-5 w-5 inline-block mr-2" />
+                                                            Textvorschlag erstellen
+                                                        </>
+                                                    )}
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => handleDeletePage(selectedPageIndexInEditor)}
+                                                disabled={pages.length === 1}
+                                                className="w-full py-3 bg-red-500 text-white font-semibold rounded-lg shadow-md hover:bg-red-600 transition text-base disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <Trash2 className="h-5 w-5 inline-block mr-2" />
+                                                Seite löschen
+                                            </button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <p className="text-gray-500 text-center italic">Bitte wählen Sie eine Seite aus dem Buch aus, um sie zu bearbeiten.</p>
+                                )}
+                            </div>
+                        </div>
+
+
+                        {/* Navigations- und Verwaltungsbuttons unter dem Editor */}
+                        <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-6 mt-6 w-full">
+                            <button
+                                onClick={handlePreviousPagePair}
+                                disabled={currentLeftPageIndex === 0}
+                                className="flex items-center px-8 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-full shadow-lg hover:from-purple-600 hover:to-indigo-600 transition transform hover:-translate-y-1 disabled:opacity-50 disabled:cursor-not-allowed text-lg font-semibold"
+                            >
+                                <ArrowLeft className="h-6 w-6 mr-2" />
+                                Vorherige Seiten
+                            </button>
+                            <span className="text-2xl font-bold text-purple-700">
+                                Seiten {currentLeftPageIndex + 1} - {Math.min(currentLeftPageIndex + 2, pages.length)} von {pages.length}
+                            </span>
+                            <button
+                                onClick={handleNextPagePair}
+                                disabled={currentLeftPageIndex + 2 >= pages.length}
+                                className="flex items-center px-8 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-full shadow-lg hover:from-indigo-600 hover:to-purple-600 transition transform hover:-translate-y-1 disabled:opacity-50 disabled:cursor-not-allowed text-lg font-semibold"
+                            >
+                                <ArrowRight className="h-6 w-6 ml-2" />
+                                Nächste Seiten
+                            </button>
+                            <button
+                                onClick={handleAddPage}
+                                className="flex items-center px-8 py-3 bg-gradient-to-r from-green-500 to-lime-500 text-white font-semibold rounded-full shadow-lg hover:from-green-600 hover:to-lime-600 transition transform hover:-translate-y-0.5"
+                            >
+                                <Plus className="h-6 w-6 inline-block mr-2" />
+                                Seite hinzufügen
+                            </button>
+                        </div>
+
+                        {/* Fehlermeldung (zentralisiert) */}
+                        {error && (
+                            <div className="mt-8 p-4 bg-red-100 border border-red-400 text-red-700 rounded-xl w-full max-w-3xl text-center shadow-sm">
+                                <p className="font-medium">{error}</p>
+                            </div>
+                        )}
+
+                        {/* Vorschau des gesamten Bilderbuchs (Miniaturansicht) */}
+                        <div className="mt-12 w-full">
+                            <h2 className="text-4xl font-bold text-center text-purple-800 mb-10 drop-shadow-md">
+                                Gesamtes Buch (Vorschau)
+                            </h2>
+                            {/* PDF Export Button */}
+                            <div className="flex justify-center mb-8">
+                                <button
+                                    onClick={handleExportPdf}
+                                    disabled={exportingPdf}
+                                    className={`flex items-center px-8 py-3 rounded-full text-white text-lg font-semibold shadow-lg transition transform hover:-translate-y-0.5
+                                        ${exportingPdf ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'}
+                                    `}
+                                >
+                                    {exportingPdf ? (
+                                        <>
+                                            <Sparkles className="animate-spin h-5 w-5 text-white mr-3" />
+                                            PDF wird erstellt...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Download className="h-6 w-6 inline-block mr-2" />
+                                            Als PDF exportieren
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+
+                            <div className="flex flex-wrap justify-center gap-8 p-6 bg-purple-50 rounded-3xl shadow-inner border-2 border-purple-200">
+                                {pages.map((page, index) => {
+                                    // Für die Vorschau rendern wir Paare von Seiten
+                                    if (index % 2 === 0) {
+                                        const leftPage = page;
+                                        const rightPage = pages[index + 1] || null;
+
+                                        return (
+                                            <div key={`page-pair-${index}`} className="flex flex-col items-center">
+                                                <h3 className="text-xl font-bold text-gray-700 mb-2">
+                                                    Seiten {index + 1} & {index + 2}
+                                                </h3>
+                                                {/* Book Spread for Preview */}
+                                                <div className={`book-spread flex flex-col md:flex-row bg-white rounded-xl shadow-lg border-2 border-purple-300 overflow-hidden w-full max-w-lg min-h-[25rem] transition-all duration-300 ease-in-out hover:shadow-2xl`}>
+                                                    {/* Linke Seite des Spreads in der Vorschau */}
+                                                    <div className="w-1/2 p-4 flex flex-col items-stretch border-r border-gray-200">
+                                                        {renderBookPageVisual(leftPage, index)}
+                                                        <button
+                                                            onClick={() => { setCurrentLeftPageIndex(index); setSelectedPageIndexInEditor(index); }}
+                                                            className="mt-4 w-full px-4 py-2 bg-blue-500 text-white text-sm rounded-lg shadow-md hover:bg-blue-600 transition transform hover:-translate-y-0.5"
+                                                        >
+                                                            Seite {index + 1} bearbeiten
+                                                        </button>
+                                                    </div>
+                                                    {/* Rechte Seite des Spreads in der Vorschau */}
+                                                    <div className="w-1/2 p-4 flex flex-col items-stretch">
+                                                        {rightPage ? renderBookPageVisual(rightPage, index + 1) : (
+                                                            <div className="book-page-placeholder bg-gray-100 rounded-lg shadow-inner flex items-center justify-center text-gray-400 text-lg border border-dashed border-gray-300 w-full h-full flex-shrink-0">
+                                                                Leere Seite
+                                                            </div>
+                                                        )}
+                                                        {rightPage && (
+                                                            <button
+                                                                onClick={() => { setCurrentLeftPageIndex(index); setSelectedPageIndexInEditor(index + 1); }}
+                                                                className="mt-4 w-full px-4 py-2 bg-blue-500 text-white text-sm rounded-lg shadow-md hover:bg-blue-600 transition transform hover:-translate-y-0.5"
+                                                            >
+                                                                Seite {index + 2} bearbeiten
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                    return null; // Überspringt die rechte Seite, da sie im vorherigen Spread gerendert wurde
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
