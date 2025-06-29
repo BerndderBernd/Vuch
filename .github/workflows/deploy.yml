@@ -1,1 +1,47 @@
+# Name des Workflows, der auf der "Actions"-Seite in GitHub angezeigt wird
+name: Deploy to GitHub Pages
+
+# Löst den Workflow bei jedem Push auf den 'main'-Branch aus
+on:
+  push:
+    branches:
+      - main # oder 'master', je nachdem, wie Ihr Hauptbranch heißt
+
+# Definiert die Berechtigungen, die der Workflow benötigt
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Definiert die Jobs, die ausgeführt werden
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest # Verwendet die neueste Ubuntu-Version als Umgebung
+    steps:
+      - name: Checkout repository
+        # Lädt Ihren Code in die virtuelle Umgebung herunter
+        uses: actions/checkout@v4
+
+      - name: Create config file
+        # Dies ist der entscheidende Schritt: Erstellt eine JS-Datei mit dem API-Schlüssel
+        run: |
+          echo "window.env = {" > config.js
+          echo "  GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'" >> config.js
+          echo "};" >> config.js
+        # WICHTIG: Ersetzt '${{ secrets.GEMINI_API_KEY }}' mit dem Wert Ihres Secrets
+
+      - name: Setup Pages
+        # Konfiguriert die GitHub Pages-Bereitstellung
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        # Lädt alle Ihre Projektdateien (inkl. der neuen config.js) hoch
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.' # Lädt alle Dateien aus dem Hauptverzeichnis hoch
+
+      - name: Deploy to GitHub Pages
+        # Stellt die hochgeladenen Dateien auf Ihrer GitHub Pages-Seite bereit
+        id: deployment
+        uses: actions/deploy-pages@v4
 
