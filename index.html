@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bilderbuch-Studio</title>
+    
+    <!-- CSS und Schriften -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .spinner-sm {
+            border: 2px solid rgba(255, 255, 255, 0.3); border-top: 2px solid #fff;
+            border-radius: 50%; width: 16px; height: 16px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* Aspect Ratios für das Buch-Layout */
+        .book-layout {
+            width: 100%;
+            max-width: 900px; /* Maximale Breite für große Bildschirme */
+        }
+        .aspect-portrait { aspect-ratio: 2 / 1.41; } /* A4 Hochformat Spread */
+        .aspect-landscape { aspect-ratio: 2.82 / 2; } /* A4 Querformat Spread */
+        .aspect-square { aspect-ratio: 2 / 1; } /* Quadratischer Spread */
+    </style>
+
+    <!-- Kernbibliotheken werden mit 'defer' geladen -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" defer></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" defer></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+</head>
+<body class="bg-gradient-to-br from-indigo-100 to-purple-200 p-4 sm:p-8 flex items-center justify-center min-h-screen">
+    
+    <div id="root" class="w-full">
+        <div class="flex flex-col items-center justify-center text-center">
+            <h2 class="text-2xl font-semibold text-purple-700">Anwendung wird geladen...</h2>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        // Startet, wenn die Seite inkl. aller Skripte vollständig geladen ist.
+        window.onload = function() {
+            try {
+                // Überprüfen, ob die verbleibenden Bibliotheken geladen sind.
+                const requiredLibs = ['React', 'ReactDOM', 'Babel', 'jspdf', 'html2canvas'];
+                const missingLibs = requiredLibs.filter(lib => !window[lib]);
+                if (missingLibs.length > 0) {
+                    throw new Error(`Bibliotheken fehlen: ${missingLibs.join(', ')}`);
+                }
+
+                // === Icon-Komponenten (lokal als SVG definiert) ===
+                const Icon = ({ children, className }) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>;
+                const RectangleVertical = ({ className }) => <Icon className={className}><rect width="12" height="20" x="6" y="2" rx="2" /></Icon>;
+                const RectangleHorizontal = ({ className }) => <Icon className={className}><rect width="20" height="12" x="2" y="6" rx="2" /></Icon>;
+                const Square = ({ className }) => <Icon className={className}><rect width="18" height="18" x="3" y="3" rx="2" /></Icon>;
+                const Palette = ({ className }) => <Icon className={className}><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.47-1.125-.29-.289-.47-.688-.47-1.125s.18-.836.47-1.125c.29-.29.47-.688.47-1.125s-.18-.835-.47-1.125c-.29-.289-.47-.688-.47-1.125s.18-.836.47-1.125c.29-.29.47-.688.47-1.125s-.18-.835-.47-1.125C13.648 2.746 12.926 2 12 2z"/></Icon>;
+                const Brush = ({ className }) => <Icon className={className}><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.21 0 4-1.79 4-4.02a3.01 3.01 0 0 0-3-3.02z"/></Icon>;
+                const Plus = ({ className }) => <Icon className={className}><path d="M5 12h14"/><path d="M12 5v14"/></Icon>;
+                const ArrowLeft = ({ className }) => <Icon className={className}><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></Icon>;
+                const ArrowRight = ({ className }) => <Icon className={className}><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></Icon>;
+                const Download = ({ className }) => <Icon className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></Icon>;
+                const Trash2 = ({ className }) => <Icon className={className}><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></Icon>;
+                const Image = ({ className }) => <Icon className={className}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></Icon>;
+                const Sparkles = ({ className }) => <Icon className={className}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></Icon>;
+                
+                const { jsPDF } = window.jspdf;
+
+                const App = () => {
+                    // === Zustände ===
+                    const [currentView, setCurrentView] = React.useState('format_selection');
+                    const [bookFormat, setBookFormat] = React.useState('21x29.7cm-portrait');
+                    const [imageStyle, setImageStyle] = React.useState('cartoon');
+                    const [pages, setPages] = React.useState([{ id: 1, image: '', text: 'Seite 1', originalFile: null, cartoonImageBase64: null, textColor: '#333333', layout: 'image-text' }]);
+                    const [currentLeftPageIndex, setCurrentLeftPageIndex] = React.useState(0);
+                    const [selectedPageIndexInEditor, setSelectedPageIndexInEditor] = React.useState(0);
+                    const [loading, setLoading] = React.useState({ text: false, image: false, pdf: false });
+                    const [error, setError] = React.useState(null);
+
+                    // === Seiten-Management ===
+                    const handleAddPage = () => {
+                        const newPageId = (pages.length > 0 ? Math.max(...pages.map(p => p.id)) : 0) + 1;
+                        const newPage = { id: newPageId, image: '', text: `Seite ${newPageId}`, originalFile: null, cartoonImageBase64: null, textColor: '#333333', layout: 'image-text' };
+                        const newPages = [...pages, newPage];
+                        setPages(newPages);
+                        setSelectedPageIndexInEditor(newPages.length - 1);
+                        // Automatisch zur neuen Doppelseite blättern
+                        if ((newPages.length - 1) % 2 === 1) {
+                            setCurrentLeftPageIndex(newPages.length - 2);
+                        }
+                    };
+
+                    const handleDeletePage = (indexToDelete) => {
+                        if (pages.length <= 1) return;
+                        setPages(p => p.filter((_, index) => index !== indexToDelete));
+                        // Logik zur Anpassung der Ansicht nach dem Löschen
+                        if (indexToDelete <= selectedPageIndexInEditor) {
+                            setSelectedPageIndexInEditor(Math.max(0, selectedPageIndexInEditor - 1));
+                        }
+                        if (indexToDelete < currentLeftPageIndex) {
+                            setCurrentLeftPageIndex(p => Math.max(0, p - 2));
+                        } else if (indexToDelete === currentLeftPageIndex && pages.length-1 <= currentLeftPageIndex) {
+                             setCurrentLeftPageIndex(p => Math.max(0, p - 2));
+                        }
+                    };
+                    
+                    const updatePage = (index, newAttrs) => setPages(p => p.map((page, i) => (i === index ? { ...page, ...newAttrs } : page)));
+                    const fileToBase64 = (file) => new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.readAsDataURL(file);
+                        reader.onload = () => resolve(reader.result.split(',')[1]);
+                        reader.onerror = err => reject(err);
+                    });
+                    const handleImageChange = (e, index) => {
+                        const file = e.target.files?.[0];
+                        if (file) updatePage(index, { image: URL.createObjectURL(file), originalFile: file, cartoonImageBase64: null });
+                    };
+
+                    // === KI & PDF Funktionen ===
+                    const runAITask = async (type, index) => {
+                        setLoading(prev => ({ ...prev, [type]: true }));
+                        setError(null);
+                        const page = pages[index];
+                        const apiKey = "";
+                        try {
+                            if (type === 'text') {
+                                if (!page?.image) throw new Error("Bitte zuerst ein Bild hochladen.");
+                                const imageData = page.cartoonImageBase64 || await fileToBase64(page.originalFile);
+                                const prompt = `Schreibe eine kurze, fesselnde Geschichte für ein Kinderbuch (3-5 Sätze) basierend auf diesem Bild.`;
+                                const payload = { contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: page.cartoonImageBase64 ? "image/png" : page.originalFile.type, data: imageData } }] }] };
+                                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                const result = await response.json();
+                                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                                if (!text) throw new Error("Kein Text von der KI erhalten.");
+                                updatePage(index, { text });
+                            } else if (type === 'image') {
+                                if (!page?.originalFile) throw new Error("Bitte zuerst ein Originalbild hochladen.");
+                                const base64Original = await fileToBase64(page.originalFile);
+                                const describePrompt = `Beschreibe dieses Bild für eine KI-Bildgenerierung.`;
+                                const describePayload = { contents: [{ role: "user", parts: [{ text: describePrompt }, { inlineData: { mimeType: page.originalFile.type, data: base64Original } }] }] };
+                                const describeResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(describePayload) });
+                                const description = (await describeResponse.json()).candidates?.[0]?.content?.parts?.[0]?.text || "ein Bild";
+                                const generatePrompt = imageStyle === 'cartoon' ? `Kinderbuch-Illustration im Cartoon-Stil von: ${description}.` : `Ausmalbild für Kinder von: ${description}. Nur dicke, klare schwarze Umrisse.`;
+                                const generatePayload = { instances: [{ prompt: generatePrompt }] };
+                                const generateResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(generatePayload) });
+                                const b64 = (await generateResponse.json()).predictions?.[0]?.bytesBase64Encoded;
+                                if (!b64) throw new Error("Kein Bild von der KI erhalten.");
+                                updatePage(index, { image: `data:image/png;base64,${b64}`, cartoonImageBase64: b64 });
+                            }
+                        } catch (err) {
+                            console.error(`Fehler bei KI-Aufgabe (${type}):`, err);
+                            setError(err.message);
+                        } finally {
+                            setLoading(prev => ({ ...prev, [type]: false }));
+                        }
+                    };
+
+                    const handleExportPdf = async () => {
+                        setLoading(prev => ({ ...prev, pdf: true }));
+                        setError(null);
+                        try {
+                            const [dims, type] = bookFormat.split('-');
+                            const [width, height] = dims.split('x').map(Number);
+                            const orientation = type === 'landscape' ? 'l' : 'p';
+                            const doc = new jsPDF(orientation, 'cm', type === 'landscape' ? [height, width] : [width, height]);
+                            
+                            for (let i = 0; i < pages.length; i++) {
+                                const pageElement = document.getElementById(`render-page-${pages[i].id}`);
+                                if (!pageElement) continue;
+                                const canvas = await window.html2canvas(pageElement, { scale: 3, useCORS: true, backgroundColor: '#ffffff', logging: false });
+                                if (i > 0) doc.addPage();
+                                doc.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, doc.internal.pageSize.getWidth(), doc.internal.pageSize.getHeight());
+                            }
+                            doc.save(`bilderbuch.pdf`);
+                        } catch (err) {
+                            console.error("PDF Export Fehler:", err);
+                            setError("PDF-Export fehlgeschlagen: " + err.message);
+                        } finally {
+                            setLoading(prev => ({ ...prev, pdf: false }));
+                        }
+                    };
+                    
+                    // === Hilfskomponenten & Klassen ===
+                    const getBookLayoutClasses = () => {
+                        if (bookFormat.includes('landscape')) return 'aspect-landscape';
+                        if (bookFormat.includes('square')) return 'aspect-square';
+                        return 'aspect-portrait';
+                    };
+
+                    const Page = ({ page, index, isForRender = false }) => {
+                        if (!page) return <div className="bg-gray-100/50 rounded-lg flex items-center justify-center text-gray-400 border-2 border-dashed w-full h-full p-4 text-center">Leere Seite</div>;
+                        const isSelected = selectedPageIndexInEditor === index;
+                        const selectionClass = !isForRender && isSelected ? 'ring-4 ring-purple-400 border-purple-500' : 'border-gray-300';
+                        return (
+                            <div id={isForRender ? `render-page-${page.id}` : null} className={`bg-white border-2 rounded-lg shadow-md flex flex-col p-4 w-full h-full overflow-hidden transition-all ${selectionClass}`}>
+                                {page.layout.includes('image') && (
+                                    <div className={`w-full flex items-center justify-center ${page.layout === 'image-only' ? 'flex-grow h-full' : 'h-3/5'}`}>
+                                        {page.image ? <img src={page.image} className="max-w-full max-h-full object-contain" alt={`Seite ${index + 1}`} /> : <div className="w-full h-full bg-gray-50 flex items-center justify-center rounded text-gray-400 border-2 border-dashed p-2">[Bild]</div>}
+                                    </div>
+                                )}
+                                {page.layout.includes('text') && (
+                                    <div className={`w-full flex-grow flex items-center justify-center p-2 ${page.layout === 'image-text' ? 'h-2/5' : 'h-full'}`}>
+                                        <p className="text-base text-center w-full" style={{ color: page.textColor }}>{page.text}</p>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    };
+
+                    // === Ansichten-Rendering ===
+                    if (currentView === 'format_selection') return (
+                        <div className="bg-white/90 backdrop-blur-sm p-8 sm:p-12 rounded-3xl shadow-2xl w-full max-w-4xl flex flex-col items-center space-y-8 border-2 border-white">
+                            <h1 className="text-4xl sm:text-5xl font-extrabold text-center text-purple-800">Bilderbuch-Studio</h1>
+                            <p className="text-lg text-center text-gray-700">Wählen Sie Format und Stil für Ihr Buch.</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-gray-800 mb-4 text-center">Format</h2>
+                                    <div className="flex flex-col space-y-3">
+                                        {[ { id: '21x29.7cm-portrait', label: 'Hochformat', Icon: RectangleVertical }, { id: '29.7x21cm-landscape', label: 'Querformat', Icon: RectangleHorizontal }, { id: '21x21cm-square', label: 'Quadratisch', Icon: Square } ].map(({ id, label, Icon }) => (
+                                            <button key={id} onClick={() => setBookFormat(id)} className={`flex items-center p-4 rounded-xl border-4 transition-all ${bookFormat === id ? 'border-purple-500 bg-purple-50' : 'border-gray-300 bg-white hover:border-purple-200'}`}>
+                                                <Icon className={`h-12 w-12 mr-4 flex-shrink-0 ${bookFormat === id ? 'text-purple-600' : 'text-gray-400'}`} /> <span className="font-semibold text-lg text-left">{label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-semibold text-gray-800 mb-4 text-center">Stil</h2>
+                                    <div className="flex flex-col space-y-3">
+                                        {[ { id: 'cartoon', label: 'Farbiges Bilderbuch', Icon: Palette }, { id: 'coloring_book', label: 'Ausmalbuch', Icon: Brush } ].map(({ id, label, Icon }) => (
+                                            <button key={id} onClick={() => setImageStyle(id)} className={`flex items-center p-4 rounded-xl border-4 transition-all ${imageStyle === id ? 'border-green-500 bg-green-50' : 'border-gray-300 bg-white hover:border-green-200'}`}>
+                                                <Icon className={`h-12 w-12 mr-4 flex-shrink-0 ${imageStyle === id ? 'text-green-600' : 'text-gray-400'}`} /> <span className="font-semibold text-lg text-left">{label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                            <button onClick={() => setCurrentView('editor')} className="mt-8 px-12 py-4 bg-purple-600 text-white rounded-full shadow-lg text-xl font-bold flex items-center gap-3 hover:bg-purple-700 transition-colors">Buch gestalten <ArrowRight /></button>
+                        </div>
+                    );
+
+                    return (
+                        <div className="bg-white/90 backdrop-blur-sm p-4 md:p-8 rounded-3xl shadow-2xl w-full flex flex-col items-center space-y-4">
+                            <h1 className="text-3xl sm:text-4xl font-extrabold text-center text-purple-800">Ihr Bilderbuch-Editor</h1>
+                            <div className="flex flex-col xl:flex-row w-full gap-6 items-start">
+                                {/* Buchansicht */}
+                                <div className="w-full xl:w-2/3 flex flex-col items-center gap-4">
+                                    <div className={`book-layout relative bg-purple-100 rounded-2xl shadow-lg flex border-2 border-purple-300 overflow-hidden ${getBookLayoutClasses()}`}>
+                                        <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-3 bg-purple-600 z-10"></div>
+                                        <div className="w-1/2 p-2 sm:p-4 flex"><button onClick={() => setSelectedPageIndexInEditor(currentLeftPageIndex)} className="w-full h-full"><Page page={pages[currentLeftPageIndex]} index={currentLeftPageIndex} /></button></div>
+                                        <div className="w-1/2 p-2 sm:p-4 flex"><button onClick={() => pages[currentLeftPageIndex+1] && setSelectedPageIndexInEditor(currentLeftPageIndex + 1)} className="w-full h-full"><Page page={pages[currentLeftPageIndex+1]} index={currentLeftPageIndex + 1} /></button></div>
+                                    </div>
+                                    <div className="flex flex-wrap justify-center items-center gap-3">
+                                        <button onClick={() => setCurrentLeftPageIndex(p => Math.max(0, p - 2))} disabled={currentLeftPageIndex === 0} className="px-5 py-2 bg-purple-500 text-white rounded-full shadow-md disabled:opacity-50 font-semibold flex items-center gap-2"><ArrowLeft className="h-5 w-5"/> Zurück</button>
+                                        <span className="text-lg font-bold text-purple-700">Seiten {currentLeftPageIndex + 1}-{Math.min(currentLeftPageIndex + 2, pages.length)}</span>
+                                        <button onClick={() => setCurrentLeftPageIndex(p => (p + 2 < pages.length ? p + 2 : p))} disabled={currentLeftPageIndex + 2 >= pages.length} className="px-5 py-2 bg-purple-500 text-white rounded-full shadow-md disabled:opacity-50 font-semibold flex items-center gap-2">Weiter <ArrowRight className="h-5 w-5"/></button>
+                                    </div>
+                                </div>
+                                {/* Bedienfeld */}
+                                <div className="w-full xl:w-1/3 bg-gray-50/70 p-4 rounded-2xl shadow-lg border-2 border-gray-200 flex flex-col space-y-3 xl:max-w-md">
+                                    <h2 className="text-xl font-bold text-gray-800 text-center">Seite {selectedPageIndexInEditor + 1}</h2>
+                                    {pages[selectedPageIndexInEditor] ? <>
+                                        <textarea value={pages[selectedPageIndexInEditor].text} onChange={(e) => updatePage(selectedPageIndexInEditor, {text: e.target.value})} placeholder="Text..." rows="4" className="w-full p-2 border rounded-md shadow-sm" />
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <select value={pages[selectedPageIndexInEditor].layout} onChange={(e) => updatePage(selectedPageIndexInEditor, {layout: e.target.value})} className="w-full p-2 border rounded-md"><option value="image-text">Bild & Text</option><option value="image-only">Nur Bild</option><option value="text-only">Nur Text</option></select>
+                                            <input type="color" value={pages[selectedPageIndexInEditor].textColor} onChange={(e) => updatePage(selectedPageIndexInEditor, {textColor: e.target.value})} className="w-full h-10 p-1 border rounded-md" />
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-2 pt-2 border-t">
+                                            <label className="w-full cursor-pointer bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg text-center flex items-center justify-center gap-2 transition-colors"><Image className="h-5 w-5"/> Bild...<input type="file" accept="image/*" onChange={(e) => handleImageChange(e, selectedPageIndexInEditor)} className="hidden"/></label>
+                                            <button onClick={() => runAITask('image', selectedPageIndexInEditor)} disabled={!pages[selectedPageIndexInEditor].originalFile || loading.image} className="w-full py-2 rounded-lg text-white font-semibold bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 flex items-center justify-center gap-2">{loading.image ? <div className="spinner-sm"/> : <><Sparkles className="h-5 w-5"/> Bild umwandeln</>}</button>
+                                            <button onClick={() => runAITask('text', selectedPageIndexInEditor)} disabled={!pages[selectedPageIndexInEditor].image || loading.text} className="w-full py-2 rounded-lg text-white font-semibold bg-pink-500 hover:bg-pink-600 disabled:bg-gray-400 flex items-center justify-center gap-2">{loading.text ? <div className="spinner-sm"/> : <><Sparkles className="h-5 w-5"/> Text vorschlagen</>}</button>
+                                            <button onClick={() => handleDeletePage(selectedPageIndexInEditor)} disabled={pages.length <= 1} className="w-full py-2 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-lg disabled:opacity-50 flex items-center justify-center gap-2"><Trash2 className="h-5 w-5"/> Seite löschen</button>
+                                        </div>
+                                    </> : <p className="text-center text-gray-500 py-10">Seite im Buch auswählen.</p>}
+                                </div>
+                            </div>
+                            {error && <div className="mt-2 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 w-full max-w-4xl"><p><b className="font-bold">Fehler:</b> {error}</p></div>}
+                            <div className="w-full border-t-2 pt-4 flex flex-wrap justify-center items-center gap-4">
+                                <button onClick={handleAddPage} className="px-6 py-2 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-full shadow-md flex items-center gap-2"><Plus className="h-5 w-5"/> Neue Seite</button>
+                                <button onClick={handleExportPdf} disabled={loading.pdf} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-full shadow-md disabled:bg-gray-400 flex items-center gap-2">{loading.pdf ? <div className="spinner-sm"/> : <Download className="h-5 w-5"/>} PDF Exportieren</button>
+                            </div>
+                            {/* Versteckter Container für den PDF-Export */}
+                            <div className="absolute -left-[9999px] top-auto w-[21cm]">
+                               {pages.map((page, index) => <Page page={page} index={index} isForRender={true} key={`render-${page.id}`} />)}
+                            </div>
+                        </div>
+                    );
+                };
+                
+                ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
+
+            } catch (error) {
+                console.error("Fehler beim Initialisieren der App:", error);
+                document.getElementById('root').innerHTML = `<div class="m-auto p-8 bg-red-100 border-2 border-red-500 rounded-lg text-red-800 max-w-2xl"><h2 class="text-2xl font-bold mb-4">Fehler beim Start</h2><pre class="bg-red-200 p-4 rounded text-sm whitespace-pre-wrap">${error.stack}</pre></div>`;
+            }
+        };
+    </script>
+</body>
+</html>
