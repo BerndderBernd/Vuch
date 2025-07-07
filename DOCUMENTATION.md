@@ -1,6 +1,6 @@
 # 🖼️ AI Image Generator – Developer Documentation
 
-This document describes every publicly exposed component, function and external API in the current codebase. Examples and step-by-step usage instructions are included.
+This document describes the public components, functions, and external API interactions that **actually exist** in the current codebase (`index.html` and `script.js`).
 
 ---
 
@@ -8,17 +8,16 @@ This document describes every publicly exposed component, function and external 
 
 1. Overview
 2. Project structure
-3. External dependencies & public APIs
+3. External dependencies & public API
 4. HTML components (`index.html`)
 5. JavaScript API (`script.js`)
-6. Getting started & examples
-7. Ideas for further improvement
+6. Getting started & example usage
 
 ---
 
 ## 1 – Overview
 
-The application is a **client-side** image generator that calls the **Google Imagen 3** model. A user enters a text prompt, clicks *Generate* and receives a Base64-encoded PNG that is rendered directly in the browser.
+The application is a **client-side** image generator that sends a prompt to the Google *Imagen 3* model and displays the returned PNG image in the browser. Everything runs locally in the user's browser—no backend code is included.
 
 ---
 
@@ -28,35 +27,34 @@ The application is a **client-side** image generator that calls the **Google Ima
 / (project root)
 ├── index.html        # Main HTML document
 ├── script.js         # UI logic & API call
-├── README.md         # Short description (placeholder)
-└── DOCUMENTATION.md  # You are here
+├── README.md         # Short placeholder file
+└── DOCUMENTATION.md  # This file
 ```
 
-At runtime the page expects `window.env.GEMINI_API_KEY` to be defined **before** `script.js` executes. How you inject that variable is up to you (see section 6).
+`script.js` expects an environment variable named `window.env.GEMINI_API_KEY` **before** it runs. You can inject it with a small inline `<script>` tag (see section 6).
 
 ---
 
-## 3 – External dependencies & public APIs
+## 3 – External dependency & public API
 
-### 3.1 Tailwind CSS
+### Tailwind CSS (styling)
 
-Used for quick styling, loaded via CDN:
+Loaded via CDN for quick styling:
 
 ```html
 <script src="https://cdn.tailwindcss.com"></script>
 ```
 
-No additional configuration is required.
+### Google Imagen 3 (image generation)
 
-### 3.2 Google Imagen 3
-
-The image itself is generated through the *Generative Language* API (v1beta):
+Endpoint called from `script.js`:
 
 ```
 POST https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=<GEMINI_API_KEY>
 ```
 
-**Request body**
+Request body sent by the app (fixed to `sampleCount: 1`):
+
 ```json
 {
   "instances": [ { "prompt": "A red fox in the snow at dawn" } ],
@@ -64,50 +62,48 @@ POST https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate
 }
 ```
 
-**Relevant field in the response**
+In the response the code reads:
 ```
 .predictions[0].bytesBase64Encoded   # Base64-encoded PNG
 ```
-
-Full API reference: <https://cloud.google.com/vertex-ai/docs/generative-ai>
 
 ---
 
 ## 4 – HTML components (`index.html`)
 
-| Element ID        | Type / Purpose                                                    |
-|-------------------|-------------------------------------------------------------------|
-| `prompt-input`    | `<input>` – text field for the prompt                             |
-| `generate-btn`    | `<button>` – triggers `generateImage()`                           |
-| `btn-text`        | `<span>` – visible button label                                   |
-| `btn-loader`      | `<div>` – spinner shown while waiting for the API                 |
-| `result-container`| `<div>` – wrapper for result, error message & placeholder         |
-| `placeholder-text`| `<p>` – default / status text                                     |
-| `result-image`    | `<img>` – displays the generated image                            |
-| `error-message`   | `<p>` – shows errors returned by the API or client-side code      |
+| Element ID         | Purpose / Notes                                                 |
+|--------------------|-----------------------------------------------------------------|
+| `prompt-input`     | `<input>` – text field where the user types the prompt          |
+| `generate-btn`     | `<button>` – triggers `generateImage()`                         |
+| `btn-text`         | `<span>` – visible label inside the button                      |
+| `btn-loader`       | `<div>` – spinner shown while waiting for the API               |
+| `result-container` | `<div>` – wrapper for placeholder, image and error message      |
+| `placeholder-text` | `<p>` – default & status messages                               |
+| `result-image`     | `<img>` – shows the generated image (hidden until set)          |
+| `error-message`    | `<p>` – displays errors returned by the API or client-side code |
 
 ---
 
 ## 5 – JavaScript API (`script.js`)
 
-### 5.1 Global constants
+### 5.1 Constants
 
-Immediately after the DOM is parsed, the following elements are cached for fast access:
+Immediately after the DOM is parsed the following elements are cached:
 
 ```js
-const generateBtn  = document.getElementById("generate-btn");
-const promptInput  = document.getElementById("prompt-input");
-const resultImage  = document.getElementById("result-image");
-// …further constants omitted for brevity
+const generateBtn   = document.getElementById("generate-btn");
+const promptInput   = document.getElementById("prompt-input");
+const resultImage   = document.getElementById("result-image");
+const resultContainer = document.getElementById("result-container");
+const placeholderText = document.getElementById("placeholder-text");
+const errorMessage  = document.getElementById("error-message");
+const btnText       = document.getElementById("btn-text");
+const btnLoader     = document.getElementById("btn-loader");
 ```
-
-The API key is read from `window.env?.GEMINI_API_KEY`. If the key is missing or empty, an error message is shown and the *Generate* button is disabled.
 
 ### 5.2 Function: `setLoading(isLoading)`
 
-| Parameter   | Type    | Description                                             |
-|-------------|---------|---------------------------------------------------------|
-| `isLoading` | boolean | `true` → show spinner & disable button, `false` → reset |
+Controls the loading state of the *Generate* button.
 
 ```js
 function setLoading(isLoading) {
@@ -125,72 +121,42 @@ function setLoading(isLoading) {
 
 ### 5.3 Async function: `generateImage()`
 
-Main entry point. Workflow:
+Main workflow:
 
-1. Read the prompt from `promptInput`.
-2. Validate the input (empty → `alert`).
-3. Enter loading state via `setLoading(true)`.
-4. Build the request and call the Imagen 3 endpoint.
-5. Check HTTP status; throw if not `response.ok`.
-6. Decode `result.predictions[0].bytesBase64Encoded` and set `resultImage.src`.
-7. On error: display the message in `errorMessage`.
-8. Exit loading state in the `finally` block.
+1. Read the prompt from the input field.
+2. Validate (empty prompt → `alert`).
+3. Prepare UI: `setLoading(true)`, hide previous error/image, show "Generating..." placeholder.
+4. Call the Imagen 3 endpoint (fetch POST request).
+5. On **success**: decode `bytesBase64Encoded`, set `resultImage.src`, show image.
+6. On **error**: write the message into `errorMessage` and show it.
+7. Always exit loading state in the `finally` block.
+
+The function is wired to the `click` event of `generate-btn`:
 
 ```js
-async function generateImage() {
-  const prompt = promptInput.value;
-  if (!prompt) {
-    alert("Please enter a description.");
-    return;
-  }
-  setLoading(true);
-  /* …API call & error handling… */
-}
+generateBtn.addEventListener("click", generateImage);
 ```
 
-The function is wired to the click handler of the *Generate* button, but can also be invoked programmatically.
+There are **no other public functions or components** in the codebase.
 
 ---
 
-## 6 – Getting started & examples
-
-### 6.1 Local setup
+## 6 – Getting started
 
 1. **Clone the repository**
    ```bash
    git clone <repo-url>
    cd <project>
    ```
-2. **Obtain an API key**
-   Request a valid *GEMINI_API_KEY* via Google Cloud.
-3. **Inject the key**
-   Add a script tag **before** `script.js` in `index.html` — for example:
+2. **Provide an API key**
+   Insert an inline script **before** `script.js` in `index.html`:
    ```html
    <script>
-     window.env = { GEMINI_API_KEY: "PASTE_YOUR_KEY_HERE" };
+     window.env = { GEMINI_API_KEY: "YOUR_KEY_HERE" };
    </script>
    ```
-4. **Open the page**
-   Double-click `index.html` or serve the directory with a static file server.
-
-### 6.2 Example: generate an image
-
-1. Enter a prompt such as:
-   > A futuristic city skyline with neon lights at blue hour
-2. Click **Generate**.
-3. After a few seconds the generated PNG appears in the result container.
-
----
-
-## 7 – Ideas for further improvement
-
-| Idea                             | Hint |
-|----------------------------------|------|
-| Multiple images per request      | Increase `parameters.sampleCount` and iterate over `predictions`. |
-| Progress indication              | Implement polling or server-sent events if the API supports long-running operations. |
-| Prompt history                   | Persist prompts in `localStorage` and render a history list. |
-| Responsive preview               | Fine-tune Tailwind classes for smaller screens. |
-| Backend proxy for the API key    | Store the key server-side to avoid exposing it in the frontend. |
+3. **Open the page**
+   Double-click `index.html` or serve the directory with any static file server.
 
 ---
 
