@@ -1,212 +1,197 @@
-# 🖼️ KI Bildgenerator – Entwicklerdokumentation
+# 🖼️ AI Image Generator – Developer Documentation
 
-Diese Dokumentation beschreibt alle öffentlich zugänglichen Komponenten, Funktionen und externen APIs der App. Zusätzlich enthält sie Beispiele und Hinweise zur Nutzung und Erweiterung.
-
----
-
-## Inhaltsverzeichnis
-
-1. Überblick
-2. Projektstruktur
-3. Externe Abhängigkeiten & öffentliche APIs
-4. HTML-Komponenten
-5. JavaScript-API (script.js)
-6. Schnellstart & Beispiele
-7. Erweiterungsmöglichkeiten
+This document describes every publicly exposed component, function and external API in the current codebase. Examples and step-by-step usage instructions are included.
 
 ---
 
-## 1 – Überblick
+## Table of Contents
 
-Die Anwendung ist ein client-seitiger Bildgenerator, der mithilfe des **Google Imagen 3**-Modells Bilder aus Textprompts erzeugt. Der Benutzer gibt eine Beschreibung ein, klickt auf „Generieren“ und erhält daraufhin ein Base64-kodiertes Bild, das im Browser angezeigt wird.
+1. Overview
+2. Project structure
+3. External dependencies & public APIs
+4. HTML components (`index.html`)
+5. JavaScript API (`script.js`)
+6. Getting started & examples
+7. Ideas for further improvement
 
 ---
 
-## 2 – Projektstruktur
+## 1 – Overview
+
+The application is a **client-side** image generator that calls the **Google Imagen 3** model. A user enters a text prompt, clicks *Generate* and receives a Base64-encoded PNG that is rendered directly in the browser.
+
+---
+
+## 2 – Project structure
 
 ```
-/ (Projektwurzel)
-├── index.html       # Zentrales HTML-Dokument
-├── script.js        # Hauptlogik (UI-Interaktion & API-Aufruf)
-├── config.js*       # Automatisch generierte Datei mit API-Schlüssel (env)
-├── DOCUMENTATION.md # Diese Datei
-└── README.md        # Kurzbeschreibung
+/ (project root)
+├── index.html        # Main HTML document
+├── script.js         # UI logic & API call
+├── README.md         # Short description (placeholder)
+└── DOCUMENTATION.md  # You are here
 ```
-\* *`config.js` wird von CI-Pipelines (GitHub Actions) generiert und enthält den öffentlichen API-Key. In lokalen Umgebungen muss diese Datei manuell erstellt werden – siehe Abschnitt 6.*
+
+At runtime the page expects `window.env.GEMINI_API_KEY` to be defined **before** `script.js` executes. How you inject that variable is up to you (see section 6).
 
 ---
 
-## 3 – Externe Abhängigkeiten & öffentliche APIs
+## 3 – External dependencies & public APIs
 
 ### 3.1 Tailwind CSS
 
-Zur schnellen Gestaltung der Oberfläche wird Tailwind CSS über ein CDN eingebunden:
+Used for quick styling, loaded via CDN:
 
 ```html
 <script src="https://cdn.tailwindcss.com"></script>
 ```
 
-Es sind keine weiteren Schritte erforderlich.
+No additional configuration is required.
 
 ### 3.2 Google Imagen 3
 
-Die Bildgenerierung erfolgt über das **v1beta Endpoint** des Google Generative Language Service:
+The image itself is generated through the *Generative Language* API (v1beta):
 
 ```
 POST https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=<GEMINI_API_KEY>
 ```
 
-**Request-Body**
+**Request body**
 ```json
 {
-  "instances": [ { "prompt": "Ein roter Fuchs im Schnee" } ],
+  "instances": [ { "prompt": "A red fox in the snow at dawn" } ],
   "parameters": { "sampleCount": 1 }
 }
 ```
 
-**Relevante Felder in der Antwort**
+**Relevant field in the response**
 ```
-.predictions[0].bytesBase64Encoded   # Base64-PNG-Inhalt
+.predictions[0].bytesBase64Encoded   # Base64-encoded PNG
 ```
 
-Weitere Dokumentation finden Sie unter <https://cloud.google.com/vertex-ai/docs/generative-ai>
+Full API reference: <https://cloud.google.com/vertex-ai/docs/generative-ai>
 
 ---
 
-## 4 – HTML-Komponenten (index.html)
+## 4 – HTML components (`index.html`)
 
-| Element-ID          | Typ / Zweck                                                         |
-|---------------------|---------------------------------------------------------------------|
-| `prompt-input`      | `<input>` – Textfeld für den Prompt                                 |
-| `generate-btn`      | `<button>` – löst `generateImage()` aus                             |
-| `btn-text`          | `<span>` – sichtbarer Button-Text                                   |
-| `btn-loader`        | `<div>` – CSS-Loader (wird per JS ein/ausgeblendet)                 |
-| `result-container`  | `<div>` – Wrapper für Ergebnis, Fehlermeldung & Platzhalter         |
-| `placeholder-text`  | `<p>` – Standard-/Status-Text                                       |
-| `result-image`      | `<img>` – zeigt das generierte Bild                                 |
-| `error-message`     | `<p>` – Fehlermeldungen                                             |
+| Element ID        | Type / Purpose                                                    |
+|-------------------|-------------------------------------------------------------------|
+| `prompt-input`    | `<input>` – text field for the prompt                             |
+| `generate-btn`    | `<button>` – triggers `generateImage()`                           |
+| `btn-text`        | `<span>` – visible button label                                   |
+| `btn-loader`      | `<div>` – spinner shown while waiting for the API                 |
+| `result-container`| `<div>` – wrapper for result, error message & placeholder         |
+| `placeholder-text`| `<p>` – default / status text                                     |
+| `result-image`    | `<img>` – displays the generated image                            |
+| `error-message`   | `<p>` – shows errors returned by the API or client-side code      |
 
 ---
 
-## 5 – JavaScript-API (script.js)
+## 5 – JavaScript API (`script.js`)
 
-### 5.1 Globale Konstanten
+### 5.1 Global constants
 
-Beim Laden der Seite werden wesentliche DOM-Elemente gecached:
+Immediately after the DOM is parsed, the following elements are cached for fast access:
 
 ```js
-const generateBtn   = document.getElementById('generate-btn');
-const promptInput   = document.getElementById('prompt-input');
-const resultImage   = document.getElementById('result-image');
-// … weitere siehe Quellcode
+const generateBtn  = document.getElementById("generate-btn");
+const promptInput  = document.getElementById("prompt-input");
+const resultImage  = document.getElementById("result-image");
+// …further constants omitted for brevity
 ```
 
-Zusätzlich wird der API-Key aus der Injected-Variable `window.env.GEMINI_API_KEY` gelesen.
+The API key is read from `window.env?.GEMINI_API_KEY`. If the key is missing or empty, an error message is shown and the *Generate* button is disabled.
 
 ### 5.2 Function: `setLoading(isLoading)`
 
-| Parameter | Typ    | Beschreibung                                   |
-|-----------|--------|-------------------------------------------------|
-| `isLoading` | boolean | `true` → UI in Ladezustand versetzen, `false` → zurücksetzen |
+| Parameter   | Type    | Description                                             |
+|-------------|---------|---------------------------------------------------------|
+| `isLoading` | boolean | `true` → show spinner & disable button, `false` → reset |
 
 ```js
 function setLoading(isLoading) {
   if (isLoading) {
-    btnText.classList.add('hidden');
-    btnLoader.classList.remove('hidden');
+    btnText.classList.add("hidden");
+    btnLoader.classList.remove("hidden");
     generateBtn.disabled = true;
   } else {
-    btnText.classList.remove('hidden');
-    btnLoader.classList.add('hidden');
+    btnText.classList.remove("hidden");
+    btnLoader.classList.add("hidden");
     generateBtn.disabled = false;
   }
 }
 ```
 
-**Beispiel**
-```js
-setLoading(true);   // Zeigt den Spinner und deaktiviert den Button
-```
+### 5.3 Async function: `generateImage()`
 
-### 5.3 Async Function: `generateImage()`
+Main entry point. Workflow:
 
-Hauptfunktion. Führt folgende Schritte aus:
-
-1. Liest den Prompt aus `promptInput`.
-2. Validiert Eingabe (leerer Prompt → `alert`).
-3. Setzt UI in Ladezustand (`setLoading(true)`).
-4. Baut den API-Request und ruft den Imagen-3-Endpoint auf.
-5. Prüft HTTP-Status; wirft Exception bei Fehler.
-6. Wertet `result.predictions[0].bytesBase64Encoded` aus und zeigt das Bild an.
-7. Bei Fehlern: Zeigt Meldung in `errorMessage`.
-8. Schaltet Ladezustand ab (`finally`-Block).
+1. Read the prompt from `promptInput`.
+2. Validate the input (empty → `alert`).
+3. Enter loading state via `setLoading(true)`.
+4. Build the request and call the Imagen 3 endpoint.
+5. Check HTTP status; throw if not `response.ok`.
+6. Decode `result.predictions[0].bytesBase64Encoded` and set `resultImage.src`.
+7. On error: display the message in `errorMessage`.
+8. Exit loading state in the `finally` block.
 
 ```js
 async function generateImage() {
   const prompt = promptInput.value;
   if (!prompt) {
-    alert('Bitte geben Sie eine Beschreibung ein.');
+    alert("Please enter a description.");
     return;
   }
   setLoading(true);
-  /* … API-Call & Error-Handling … */
+  /* …API call & error handling… */
 }
 ```
 
-Die Funktion ist über den Click-Handler des Buttons öffentlich zugänglich, kann aber auch manuell aufgerufen werden:
-
-```js
-document.getElementById('generate-btn').addEventListener('click', generateImage);
-```
+The function is wired to the click handler of the *Generate* button, but can also be invoked programmatically.
 
 ---
 
-## 6 – Schnellstart & Beispiele
+## 6 – Getting started & examples
 
-### 6.1 Lokales Setup
+### 6.1 Local setup
 
-1. **Repository klonen**
+1. **Clone the repository**
    ```bash
    git clone <repo-url>
-   cd <projekt>
+   cd <project>
    ```
-2. **API-Key beschaffen**
-   Beantragen Sie über Google Cloud einen gültigen `GEMINI_API_KEY`.
-3. **`config.js` erstellen**
-   Legen Sie im Projektwurzel-Verzeichnis eine Datei `config.js` an:
-   ```js
-   window.env = {
-     GEMINI_API_KEY: 'PASTE_YOUR_KEY_HERE'
-   };
+2. **Obtain an API key**
+   Request a valid *GEMINI_API_KEY* via Google Cloud.
+3. **Inject the key**
+   Add a script tag **before** `script.js` in `index.html` — for example:
+   ```html
+   <script>
+     window.env = { GEMINI_API_KEY: "PASTE_YOUR_KEY_HERE" };
+   </script>
    ```
-4. **Starten**
-   Öffnen Sie `index.html` in einem Browser (kein Web-Server nötig).
+4. **Open the page**
+   Double-click `index.html` or serve the directory with a static file server.
 
-### 6.2 Beispiel: Bild generieren
+### 6.2 Example: generate an image
 
-1. Geben Sie im Eingabefeld z. B. folgenden Prompt ein:
-   > Ein futuristischer Stadt-Panorama mit Neonlichtern zur blauen Stunde
-2. Klicken Sie **Generieren**.
-3. Nach wenigen Sekunden erscheint das generierte PNG-Bild im Ergebnis-Container.
-
----
-
-## 7 – Erweiterungsmöglichkeiten
-
-| Idee | Hinweis |
-|------|---------|
-| Mehrere Bilder gleichzeitig | `parameters.sampleCount` ≥ 1 und Schleife über `predictions` |
-| Fortschrittsanzeige | Prüfen, ob der API long-running operation unterstützt oder Polling implementieren |
-| Prompt-Historie | Eingaben z. B. in `localStorage` persistieren und rendern |
-| Responsive Preview | CSS-Klassen für mobile Geräte optimieren |
-| Backend-Proxy | API-Key serverseitig halten, um Exposition im Frontend zu vermeiden |
+1. Enter a prompt such as:
+   > A futuristic city skyline with neon lights at blue hour
+2. Click **Generate**.
+3. After a few seconds the generated PNG appears in the result container.
 
 ---
 
-## Lizenz
+## 7 – Ideas for further improvement
 
-Dieses Projekt steht unter der MIT-Lizenz – siehe `LICENSE` (falls vorhanden).
+| Idea                             | Hint |
+|----------------------------------|------|
+| Multiple images per request      | Increase `parameters.sampleCount` and iterate over `predictions`. |
+| Progress indication              | Implement polling or server-sent events if the API supports long-running operations. |
+| Prompt history                   | Persist prompts in `localStorage` and render a history list. |
+| Responsive preview               | Fine-tune Tailwind classes for smaller screens. |
+| Backend proxy for the API key    | Store the key server-side to avoid exposing it in the frontend. |
 
 ---
 
-*Letzte Aktualisierung: <!-- CURSOR_TIMESTAMP -->*
+*Last updated: <!-- CURSOR_TIMESTAMP -->*
